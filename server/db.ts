@@ -34,6 +34,7 @@ import {
   InsertInnerCircleMonth,
   innerCircleWeeks,
   InsertInnerCircleWeek,
+  userInnerCircleProgress,
   chartographyBookings,
   InsertChartographyBooking,
   products,
@@ -422,6 +423,75 @@ export async function createInnerCircleWeek(data: InsertInnerCircleWeek) {
   if (!db) throw new Error("Database not available");
   
   await db.insert(innerCircleWeeks).values(data);
+}
+
+// ============================================================================
+// Inner Circle Progress Functions
+// ============================================================================
+
+export async function getUserInnerCircleProgress(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return await db
+    .select()
+    .from(userInnerCircleProgress)
+    .where(eq(userInnerCircleProgress.userId, userId))
+    .orderBy(userInnerCircleProgress.weekId);
+}
+
+export async function upsertUserInnerCircleProgress(data: {
+  userId: number;
+  monthId: number;
+  weekId: number;
+  completed: boolean;
+  notes?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const completedAt = data.completed ? new Date() : null;
+  const updateSet: {
+    monthId: number;
+    completed: boolean;
+    completedAt: Date | null;
+    updatedAt: Date;
+    notes?: string | null;
+  } = {
+    monthId: data.monthId,
+    completed: data.completed,
+    completedAt,
+    updatedAt: new Date(),
+  };
+
+  if (data.notes !== undefined) {
+    updateSet.notes = data.notes;
+  }
+
+  await db
+    .insert(userInnerCircleProgress)
+    .values({
+      userId: data.userId,
+      monthId: data.monthId,
+      weekId: data.weekId,
+      completed: data.completed,
+      completedAt,
+      notes: data.notes ?? null,
+    })
+    .onDuplicateKeyUpdate({ set: updateSet });
+
+  const result = await db
+    .select()
+    .from(userInnerCircleProgress)
+    .where(
+      and(
+        eq(userInnerCircleProgress.userId, data.userId),
+        eq(userInnerCircleProgress.weekId, data.weekId),
+      ),
+    )
+    .limit(1);
+
+  return result[0] ?? null;
 }
 
 // ============================================================================
