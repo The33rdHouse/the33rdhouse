@@ -19,6 +19,7 @@ import { createPasswordResetToken, resetPasswordWithToken, sendPasswordResetEmai
 import { generateTwoFactorSecret, generateQRCode, verifyTwoFactorToken, enableTwoFactor, disableTwoFactor } from './_core/twoFactor.js';
 import { getUserSessions, revokeSession, revokeAllOtherSessions, getLoginHistory, parseUserAgent } from './_core/sessionManagement.js';
 import { seekerProcedure, initiateProcedure, paidProcedure } from "./_core/subscriptionMiddleware";
+import { loadCurriculumFromDrive } from "./_core/curriculumSource";
 
 export const appRouter = router({
   system: systemRouter,
@@ -425,23 +426,74 @@ export const appRouter = router({
 
   // Inner Circle (requires Seeker tier or higher)
   innerCircle: router({
-    // Get all months
+    // Canonical 48-week curriculum, read from the verified Google Drive source.
+    getCurriculum: seekerProcedure.query(async () => {
+      return await loadCurriculumFromDrive();
+    }),
+
+    // Existing database-backed month metadata, normalized for the current client.
     getMonths: seekerProcedure.query(async () => {
-      return await db.getAllInnerCircleMonths();
+      const months = await db.getAllInnerCircleMonths();
+      return months.map((month) => ({
+        ...month,
+        gateNumber: month.gateId,
+      }));
     }),
 
     // Get specific month
     getMonth: seekerProcedure
-      .input(z.object({ monthNumber: z.number() }))
+      .input(z.object({ monthNumber: z.number().int().min(1).max(12) }))
       .query(async ({ input }) => {
-        return await db.getInnerCircleMonth(input.monthNumber);
+        const month = await db.getInnerCircleMonth(input.monthNumber);
+        return month ? { ...month, gateNumber: month.gateId } : null;
       }),
 
-    // Get weeks for a month
+    // Get one month's weeks, or all weeks when the current client sends no input.
     getWeeks: seekerProcedure
-      .input(z.object({ monthId: z.number() }))
+      .input(z.object({ monthId: z.number().int().positive() }).optional())
       .query(async ({ input }) => {
-        return await db.getInnerCircleWeeks(input.monthId);
+        const months = await db.getAllInnerCircleMonths();
+        const targetMonths = input?.monthId
+          ? months.filter((month) => month.id === input.monthId)
+          : months;
+
+        const groupedWeeks = await Promise.all(
+          targetMonths.map(async (month) => {
+            const weeks = await db.getInnerCircleWeeks(month.id);
+            return weeks.map((week) => ({
+              ...week,
+              monthNumber: month.monthNumber,
+              gateNumber: month.gateId,
+              subtitle: null as string | null,
+              dailyHomework: week.dailyPrompt,
+              engagementQuestions: week.engagementQuestion,
+            }));
+          }),
+        );
+
+        return groupedWeeks.flat();
+      }),
+
+    // User-specific curriculum completion and notes use the existing progress table.
+    getProgress: seekerProcedure.query(async ({ ctx }) => {
+      return await db.getUserInnerCircleProgress(ctx.user.id);
+    }),
+
+    updateProgress: seekerProcedure
+      .input(z.object({
+        monthId: z.number().int().positive(),
+        weekId: z.number().int().positive(),
+        completed: z.boolean(),
+        notes: z.string().max(10_000).nullable().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        return await db.upsertUserInnerCircleProgress({
+          userId: ctx.user.id,
+          monthId: input.monthId,
+          weekId: input.weekId,
+          completed: input.completed,
+          notes: input.notes,
+        });
       }),
   }),
 
