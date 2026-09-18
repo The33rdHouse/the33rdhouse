@@ -202,7 +202,7 @@ export function parseCurriculumMarkdown(markdown: string): CurriculumDocument {
   if (!title) throw new Error("Curriculum source is missing the level-1 title.");
   if (!subtitle) throw new Error("Curriculum source is missing the curriculum subtitle.");
   if (months.length !== 12) {
-    throw new Error' `Curriculum source must contain exactly 12 months; found ${months.length}.`);
+    throw new Error(`Curriculum source must contain exactly 12 months; found ${months.length}.`);
   }
 
   const weekCount = months.reduce((total, current) => total + current.weeks.length, 0);
